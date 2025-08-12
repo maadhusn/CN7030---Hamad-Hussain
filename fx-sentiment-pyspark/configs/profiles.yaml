@@ -1,0 +1,33 @@
+profiles:
+  devin_local:
+    description: "Small date window for quick testing"
+    date_range:
+      start: "2019-01-01"
+      end: "2019-01-10"
+    spark_config:
+      driver_memory: "2g"
+      executor_memory: "1g"
+      executor_cores: 2
+    
+  standard_lab:
+    description: "Standard lab environment"
+    date_range:
+      start: "2019-01-01"
+      end: "2023-12-31"
+    spark_config:
+      driver_memory: "4g"
+      executor_memory: "2g"
+      executor_cores: 4
+      
+  full_power:
+    description: "Full production environment"
+    date_range:
+      start: "2019-01-01"
+      end: "2024-12-31"
+    spark_config:
+      driver_memory: "8g"
+      executor_memory: "4g"
+      executor_cores: 8
+      max_result_size: "2g"
+
+active_profile: "devin_local"

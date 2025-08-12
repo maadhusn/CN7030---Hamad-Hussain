@@ -1,0 +1,33 @@
+models:
+  baseline:
+    enabled: true
+    logistic_regression:
+      enabled: true
+      C: 1.0
+      max_iter: 1000
+    random_forest:
+      enabled: true
+      n_estimators: 100
+      max_depth: 10
+      
+  ensemble:
+    enabled: true
+    voting_classifier: true
+    stacking_classifier: true
+    
+  advanced:
+    enabled: false
+    xgboost: false
+    neural_network: false
+
+validation:
+  method: "time_series_split"
+  n_splits: 5
+  test_size: 0.2
+
+metrics:
+  - "accuracy"
+  - "precision"
+  - "recall"
+  - "f1_score"
+  - "roc_auc"

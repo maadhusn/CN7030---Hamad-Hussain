@@ -1,0 +1,22 @@
+horizon: "1h"
+
+dead_zone:
+  enabled: true
+  minutes_before: 5
+  minutes_after: 5
+
+rolling_windows:
+  short: 24  # hours
+  medium: 168  # 1 week
+  long: 720   # 1 month
+
+technical_indicators:
+  sma: [5, 10, 20, 50]
+  ema: [12, 26]
+  rsi: 14
+  bollinger_bands: 20
+
+sentiment_features:
+  gdelt_tone: true
+  wiki_pageviews: true
+  news_sentiment: true
