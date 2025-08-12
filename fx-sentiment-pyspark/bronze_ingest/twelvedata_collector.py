@@ -29,7 +29,9 @@ class TwelveDataCollector:
                 'end_date': end_date,
                 'apikey': self.api_key,
                 'format': 'JSON',
-                'outputsize': 5000  # Max for free tier
+                'outputsize': 5000,  # Max for free tier
+                'dp': 6,
+                'order': 'asc'
             }
             
             url = f"{self.base_url}/time_series"
@@ -86,20 +88,18 @@ class TwelveDataCollector:
             df = pd.DataFrame(df_data)
             
             for _, row in df.iterrows():
-                date_obj = datetime.strptime(row['date'], '%Y-%m-%d')
-                year = date_obj.year
-                month = f"{date_obj.month:02d}"
-                day = f"{date_obj.day:02d}"
-                
-                file_dir = Path(output_dir) / "twelvedata" / str(year) / month / day
+                date_str = row['date']
+                file_dir = Path(output_dir) / "twelvedata" / "interval=1h" / f"date={date_str}"
                 file_dir.mkdir(parents=True, exist_ok=True)
                 
-                file_path = file_dir / f"fx_hourly_{symbol}_{row['date']}_h{row['hour']:02d}.csv"
+                file_path = file_dir / f"part-{int(time.time())}.parquet"
                 
-                if not file_path.exists():
+                if not any(file_dir.glob("*.parquet")):
                     single_row_df = pd.DataFrame([row])
-                    single_row_df.to_csv(file_path, index=False)
+                    single_row_df.to_parquet(file_path, index=False)
                     logger.info(f"Saved {file_path}")
+                else:
+                    logger.info(f"Parquet file already exists in: {file_dir}")
                     
             time.sleep(self.rate_limit_delay)  # Rate limiting
             return True

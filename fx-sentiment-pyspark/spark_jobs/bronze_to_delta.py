@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit, current_timestamp, input_file_name
+from pyspark.sql.functions import col, lit, current_timestamp, input_file_name, to_timestamp, concat_ws
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, TimestampType
 
 from spark_utils.session import get_spark
@@ -28,75 +28,77 @@ class BronzeDeltaLoader:
         self.fmt = fmt
         
     def create_bronze_fx_table(self, mode: str = 'batch') -> bool:
-        """Create bronze_fx table from Alpha Vantage and TwelveData"""
+        """Create bronze_fx table from Alpha Vantage and TwelveData sources"""
         try:
             logger.info("Processing FX data for bronze_fx table...")
             
-            alpha_path = f"{self.landing_path}/alpha_vantage/*/*/*/*"
-            twelvedata_path = f"{self.landing_path}/twelvedata/*/*/*/*"
+            alpha_path = f"{self.landing_path}/alpha_vantage/type=daily/*/*.parquet"
+            twelvedata_path = f"{self.landing_path}/twelvedata/interval=1h/*/*.parquet"
             
             dfs_to_union = []
             
             try:
                 if self._path_exists(f"{self.landing_path}/alpha_vantage"):
-                    alpha_df = self.spark.read.option("header", "true").csv(alpha_path)
+                    alpha_df = self.spark.read.option("mergeSchema", "true").parquet(alpha_path)
                     if alpha_df.count() > 0:
                         alpha_df = alpha_df.select(
-                            col("date").cast("date"),
+                            to_timestamp(concat_ws(" ", col("date").cast("string"), lit("00:00:00"))).alias("ts"),
                             col("symbol"),
                             col("open").cast("double"),
                             col("high").cast("double"),
                             col("low").cast("double"),
                             col("close").cast("double"),
+                            col("volume").cast("double"),
                             lit("alpha_vantage").alias("_source"),
                             current_timestamp().alias("_ingest_ts"),
                             input_file_name().alias("_source_file")
                         )
                         dfs_to_union.append(alpha_df)
-                        logger.info(f"Alpha Vantage: {alpha_df.count()} records")
+                        logger.info(f"Alpha Vantage records: {alpha_df.count()}")
             except Exception as e:
-                logger.warning(f"Error processing Alpha Vantage data: {e}")
-                
+                logger.warning(f"Error reading Alpha Vantage data: {e}")
+            
             try:
                 if self._path_exists(f"{self.landing_path}/twelvedata"):
-                    twelve_df = self.spark.read.option("header", "true").csv(twelvedata_path)
+                    twelve_df = self.spark.read.option("mergeSchema", "true").parquet(twelvedata_path)
                     if twelve_df.count() > 0:
                         twelve_df = twelve_df.select(
-                            col("date").cast("date"),
+                            to_timestamp(col("datetime")).alias("ts"),
                             col("symbol"),
                             col("open").cast("double"),
                             col("high").cast("double"),
                             col("low").cast("double"),
                             col("close").cast("double"),
+                            col("volume").cast("double"),
                             lit("twelvedata").alias("_source"),
                             current_timestamp().alias("_ingest_ts"),
                             input_file_name().alias("_source_file")
                         )
                         dfs_to_union.append(twelve_df)
-                        logger.info(f"TwelveData: {twelve_df.count()} records")
+                        logger.info(f"TwelveData records: {twelve_df.count()}")
             except Exception as e:
-                logger.warning(f"Error processing TwelveData data: {e}")
-                
+                logger.warning(f"Error reading TwelveData data: {e}")
+            
             if not dfs_to_union:
-                logger.warning("No FX data found to process")
+                logger.warning("No FX data found")
                 return False
-                
+            
             fx_df = dfs_to_union[0]
             for df in dfs_to_union[1:]:
-                fx_df = fx_df.union(df)
-                
+                fx_df = fx_df.unionByName(df, allowMissingColumns=True)
+            
+            fx_df = fx_df.dropDuplicates(["ts", "_source"]).orderBy("ts")
+            
             table_path = f"{self.delta_path}/bronze/bronze_fx"
             
             if mode == 'batch':
                 writer = fx_df.write.mode("overwrite")
+                if self.fmt == "delta":
+                    writer = writer.option("overwriteSchema", "true")
                 write_table(writer, table_path, self.fmt)
                 logger.info(f"Wrote {fx_df.count()} records to bronze_fx table")
-            else:
-                logger.info("Streaming mode not yet implemented for FX data")
-                return False
-                
-            return True
             
+            return True
         except Exception as e:
             logger.error(f"Error creating bronze_fx table: {e}")
             return False
@@ -212,6 +214,35 @@ class BronzeDeltaLoader:
             logger.error(f"Error creating bronze_fred table: {e}")
             return False
             
+    def create_bronze_gkg_norm_table(self, mode: str = 'batch') -> bool:
+        """Create bronze_gkg_norm table with normalized GDELT data"""
+        try:
+            from utils.gkg import normalize_gkg
+            
+            logger.info("Processing GDELT GKG data for bronze_gkg_norm table...")
+            
+            gkg_df = read_table(self.spark, f"{self.delta_path}/bronze/bronze_gkg", self.fmt)
+            
+            if gkg_df.count() == 0:
+                logger.warning("No GDELT records found")
+                return False
+                
+            normalized_df = normalize_gkg(gkg_df)
+            normalized_df = normalized_df.withColumn("_source", lit("gdelt_gkg_norm")) \
+                                       .withColumn("_ingest_ts", current_timestamp())
+                                       
+            table_path = f"{self.delta_path}/bronze/bronze_gkg_norm"
+            
+            if mode == 'batch':
+                writer = normalized_df.write.mode("overwrite")
+                write_table(writer, table_path, self.fmt)
+                logger.info(f"Wrote {normalized_df.count()} records to bronze_gkg_norm table")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error creating bronze_gkg_norm table: {e}")
+            return False
+
     def create_bronze_wiki_table(self, mode: str = 'batch') -> bool:
         """Create bronze_wiki table from Wikipedia data"""
         try:
@@ -247,6 +278,37 @@ class BronzeDeltaLoader:
             
         except Exception as e:
             logger.error(f"Error creating bronze_wiki table: {e}")
+            return False
+    
+    def create_bronze_gkg_norm_table(self, mode: str = 'batch') -> bool:
+        """Create bronze_gkg_norm table with normalized GDELT data"""
+        try:
+            from utils.gkg import normalize_gkg
+            
+            logger.info("Processing GDELT GKG data for bronze_gkg_norm table...")
+            
+            gkg_df = read_table(self.spark, f"{self.delta_path}/bronze/bronze_gkg", self.fmt)
+            
+            if gkg_df.count() == 0:
+                logger.warning("No GDELT records found")
+                return False
+                
+            normalized_df = normalize_gkg(gkg_df)
+            normalized_df = normalized_df.withColumn("_source", lit("gdelt_gkg_norm")) \
+                                       .withColumn("_ingest_ts", current_timestamp())
+                                       
+            table_path = f"{self.delta_path}/bronze/bronze_gkg_norm"
+            
+            if mode == 'batch':
+                writer = normalized_df.write.mode("overwrite")
+                if self.fmt == "delta":
+                    writer = writer.option("overwriteSchema", "true")
+                write_table(writer, table_path, self.fmt)
+                logger.info(f"Wrote {normalized_df.count()} records to bronze_gkg_norm table")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error creating bronze_gkg_norm table: {e}")
             return False
 
     def create_bronze_fred_releases_table(self, mode: str = 'batch') -> bool:
@@ -338,6 +400,7 @@ class BronzeDeltaLoader:
         
         results['bronze_fx'] = self.create_bronze_fx_table(mode)
         results['bronze_gkg'] = self.create_bronze_gkg_table(mode)
+        results['bronze_gkg_norm'] = self.create_bronze_gkg_norm_table(mode)
         results['bronze_econ'] = self.create_bronze_econ_table(mode)
         results['bronze_fred'] = self.create_bronze_fred_table(mode)
         results['bronze_fred_releases'] = self.create_bronze_fred_releases_table(mode)
@@ -358,7 +421,7 @@ class BronzeDeltaLoader:
 
 def create_spark_session(app_name: str = "BronzeDeltaLoader") -> tuple:
     """Create Spark session with Delta-first approach"""
-    return get_spark(app_name)
+    return get_spark(app_name, force_parquet=True)
 
 def main():
     parser = argparse.ArgumentParser(description='Load raw data into Delta Bronze tables')

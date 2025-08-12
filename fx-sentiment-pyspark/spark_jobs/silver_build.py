@@ -151,44 +151,15 @@ def build_fx_1h(spark: SparkSession, bronze_path: str, fmt: str) -> DataFrame:
         return None
 
 def build_gdelt_1h(spark: SparkSession, bronze_path: str, fmt: str, keywords: list) -> DataFrame:
-    """Build 1h GDELT data with keyword counts"""
+    """Build 1h GDELT data with keyword counts, rates, and z-scores"""
     try:
-        gkg_df = read_table(spark, f"{bronze_path}/bronze_gkg", fmt)
+        gkg_df = read_table(spark, f"{bronze_path}/bronze_gkg_norm", fmt)
         
         if gkg_df.count() == 0:
             logger.warning("No GDELT data found")
             return None
             
-        gkg_df = gkg_df.withColumn(
-            "date_str", 
-            concat(
-                substring(col("V2.1DATE"), 1, 4), 
-                lit("-"),
-                substring(col("V2.1DATE"), 5, 2),
-                lit("-"),
-                substring(col("V2.1DATE"), 7, 2),
-                lit(" "),
-                substring(col("V2.1TIME"), 1, 2),
-                lit(":"),
-                substring(col("V2.1TIME"), 3, 2),
-                lit(":00")
-            )
-        ).withColumn(
-            "ts",
-            to_timestamp(col("date_str"), "yyyy-MM-dd HH:mm:ss")
-        )
-        
-        hour_window = Window.partitionBy(
-            year(col("ts")),
-            month(col("ts")),
-            dayofmonth(col("ts")),
-            hour(col("ts"))
-        )
-        
-        tone_df = gkg_df.withColumn(
-            "tone", 
-            col("V2Tone").getItem(0).cast("double")
-        ).filter(
+        tone_df = gkg_df.filter(
             col("tone").isNotNull()
         ).groupBy(
             window(col("ts"), "1 hour").alias("window")
@@ -207,13 +178,8 @@ def build_gdelt_1h(spark: SparkSession, bronze_path: str, fmt: str, keywords: li
             
             keyword_df = gkg_df.withColumn(
                 "has_keyword",
-                (
-                    lower(col("V1Themes")).contains(keyword.lower()) | 
-                    lower(col("V1Locations")).contains(keyword.lower()) | 
-                    lower(col("V1Persons")).contains(keyword.lower()) | 
-                    lower(col("V1Organizations")).contains(keyword.lower()) |
-                    lower(col("DocumentIdentifier")).contains(keyword.lower())
-                )
+                lower(col("themes_raw")).contains(keyword.lower()) |
+                lower(col("docid")).contains(keyword.lower())
             ).groupBy(
                 window(col("ts"), "1 hour").alias("window")
             ).agg(
@@ -244,6 +210,43 @@ def build_gdelt_1h(spark: SparkSession, bronze_path: str, fmt: str, keywords: li
                     col_name,
                     coalesce(col(col_name), lit(0))
                 )
+        
+        result_df = result_df.withColumn(
+            "doc_count_1h",
+            coalesce(col("doc_count_1h"), lit(1))  # Avoid division by zero
+        )
+        
+        for col_name in event_cols + ["g_event_total_count_1h"]:
+            rate_col = col_name.replace("_count_1h", "_rate")
+            result_df = result_df.withColumn(
+                rate_col,
+                col(col_name).cast("double") / col("doc_count_1h")
+            )
+        
+        window_30d = Window.orderBy("ts").rowsBetween(-720, 0)  # 30 days * 24 hours
+        
+        rate_cols = [c for c in result_df.columns if c.endswith("_rate")]
+        
+        for rate_col in rate_cols:
+            z_col = rate_col + "_z30"
+            
+            result_df = result_df.withColumn(
+                f"{rate_col}_mean30",
+                F.avg(rate_col).over(window_30d)
+            ).withColumn(
+                f"{rate_col}_std30",
+                F.stddev(rate_col).over(window_30d)
+            )
+            
+            result_df = result_df.withColumn(
+                z_col,
+                F.when(
+                    col(f"{rate_col}_std30") > 0,
+                    (col(rate_col) - col(f"{rate_col}_mean30")) / col(f"{rate_col}_std30")
+                ).otherwise(lit(0.0))
+            )
+            
+            result_df = result_df.drop(f"{rate_col}_mean30", f"{rate_col}_std30")
                 
         return result_df
         
@@ -449,6 +452,8 @@ def main():
             
         silver_path = f"{args.silver_path}/silver_eurusd_1h"
         writer = silver_df.write.mode("overwrite")
+        if fmt == "delta":
+            writer = writer.option("overwriteSchema", "true")
         write_table(writer, silver_path, fmt)
         
         logger.info(f"Wrote {silver_df.count()} records to silver_eurusd_1h")
