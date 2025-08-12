@@ -1,0 +1,35 @@
+mode: bigdata        # {bigdata|dev}
+spark:
+  shuffle_partitions: 400
+  dynamic_allocation: true
+  default_parallelism: 400
+data_ranges:
+  fx:
+    symbol: "EURUSD"
+    start: null       # ALL available history
+    end: null
+  fred:
+    series: ["CPIAUCSL","PCEPI"]   # extendable
+    start: null       # ALL available history
+    end: null
+  gdelt:
+    start: "2015-02-18T00:00:00Z"  # earliest reliable for GKG 2.1
+    end: null
+  calendar_us:
+    start: null
+    end: null
+storage:
+  base: "delta/"
+  bronze: "delta/bronze"
+  silver: "delta/silver"
+  gold: "delta/gold"
+features:
+  allow_list_16: true
+training:
+  target: "label"
+  positive_class: 1
+  metrics: ["accuracy","auc","f1","precision","recall","logloss","brier"]
+  model_candidates: ["lr","rf","gbt","xgb"]
+  cv_folds: 5
+  time_split: true
+  calibrate: true

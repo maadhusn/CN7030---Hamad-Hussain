@@ -1,6 +1,10 @@
-# FX Sentiment Analysis with PySpark and Delta Lake
+# Big-Data PySpark FX Sentiment Analysis
 
-A comprehensive data pipeline for FX sentiment analysis using PySpark, Delta Lake, and MLflow. This project collects data from multiple free sources and processes it through a medallion architecture (Bronze → Silver → Gold) for machine learning model training.
+This is a Big-Data PySpark project for FX sentiment analysis using Delta Lake, MLflow, Feast feature store, and Streamlit UI. All pipelines are configured for maximum available history across FX/FRED/GDELT/Calendar data sources and designed for cluster deployment.
+
+**Expected Data Volumes**: Qualify as big-data; run on cluster (Spark standalone/YARN/Databricks)
+**Training Target**: ≥70% accuracy with LR/RF/GBT/XGBoost and time-based CV (no guarantee; depends on data)
+**Architecture**: Medallion (Bronze → Silver → Gold) with unlimited data processing
 
 ## 🏗️ Architecture
 
