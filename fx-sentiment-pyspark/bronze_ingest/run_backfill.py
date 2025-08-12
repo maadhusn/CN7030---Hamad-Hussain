@@ -8,6 +8,9 @@ import argparse
 import logging
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -16,6 +19,8 @@ from twelvedata_collector import TwelveDataCollector
 from gdelt_collector import GDELTCollector
 from tradingecon_collector import TradingEconomicsCollector
 from fred_collector import FREDCollector
+from fred_releases_collector import FREDReleasesCollector
+from fred_series_collector import FREDSeriesCollector
 from wiki_collector import WikipediaCollector
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -144,6 +149,55 @@ def run_fred(start_date: str, end_date: str, output_dir: str) -> bool:
         
     return success
 
+def run_fred_releases(start_date: str, end_date: str, output_dir: str) -> bool:
+    """Run FRED releases collector"""
+    api_key = os.getenv('FRED_API_KEY')
+    if not api_key:
+        logger.warning("FRED_API_KEY not set, skipping FRED releases collection")
+        return False
+        
+    logger.info("Starting FRED releases collection...")
+    collector = FREDReleasesCollector(api_key)
+    
+    success = collector.collect_release_dates(
+        start_date=start_date,
+        end_date=end_date,
+        output_dir=output_dir
+    )
+    
+    if success:
+        logger.info("FRED releases collection completed successfully")
+    else:
+        logger.error("FRED releases collection failed")
+        
+    return success
+
+def run_fred_series(start_date: str, end_date: str, output_dir: str) -> bool:
+    """Run FRED series collector"""
+    api_key = os.getenv('FRED_API_KEY')
+    if not api_key:
+        logger.warning("FRED_API_KEY not set, skipping FRED series collection")
+        return False
+        
+    logger.info("Starting FRED series collection...")
+    collector = FREDSeriesCollector(api_key)
+    
+    series_ids = ["CPIAUCSL", "PCEPI", "UNRATE", "FEDFUNDS", "DTWEXBGS"]
+    
+    success = collector.collect_series_data(
+        series_ids=series_ids,
+        start_date=start_date,
+        end_date=end_date,
+        output_dir=output_dir
+    )
+    
+    if success:
+        logger.info("FRED series collection completed successfully")
+    else:
+        logger.error("FRED series collection failed")
+        
+    return success
+
 def run_wikipedia(start_date: str, end_date: str, output_dir: str) -> bool:
     """Run Wikipedia collector"""
     logger.info("Starting Wikipedia pageviews collection...")
@@ -173,6 +227,8 @@ def main():
     parser.add_argument('--gkg', action='store_true', help='Collect GDELT GKG data')
     parser.add_argument('--econ', action='store_true', help='Collect Trading Economics data')
     parser.add_argument('--fred', action='store_true', help='Collect FRED data')
+    parser.add_argument('--fred-releases', action='store_true', help='Collect FRED release dates')
+    parser.add_argument('--fred-series', action='store_true', help='Collect FRED macro series')
     parser.add_argument('--wiki', action='store_true', help='Collect Wikipedia data')
     parser.add_argument('--all', action='store_true', help='Collect all sources')
     
@@ -200,7 +256,7 @@ def main():
     collectors_to_run = []
     
     if args.all:
-        collectors_to_run = ['alpha', 'twelve', 'gkg', 'econ', 'fred', 'wiki']
+        collectors_to_run = ['alpha', 'twelve', 'gkg', 'econ', 'fred', 'fred-releases', 'fred-series', 'wiki']
     else:
         if args.alpha:
             collectors_to_run.append('alpha')
@@ -212,6 +268,10 @@ def main():
             collectors_to_run.append('econ')
         if args.fred:
             collectors_to_run.append('fred')
+        if args.fred_releases:
+            collectors_to_run.append('fred-releases')
+        if args.fred_series:
+            collectors_to_run.append('fred-series')
         if args.wiki:
             collectors_to_run.append('wiki')
             
@@ -237,6 +297,10 @@ def main():
                 results['econ'] = run_tradingeconomics(args.start, args.end, args.output)
             elif collector_name == 'fred':
                 results['fred'] = run_fred(args.start, args.end, args.output)
+            elif collector_name == 'fred-releases':
+                results['fred-releases'] = run_fred_releases(args.start, args.end, args.output)
+            elif collector_name == 'fred-series':
+                results['fred-series'] = run_fred_series(args.start, args.end, args.output)
             elif collector_name == 'wiki':
                 results['wiki'] = run_wikipedia(args.start, args.end, args.output)
         except Exception as e:

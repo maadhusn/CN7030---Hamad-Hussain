@@ -63,6 +63,7 @@ class AlphaVantageCollector:
                             'high': float(values['2. high']),
                             'low': float(values['3. low']),
                             'close': float(values['4. close']),
+                            'volume': None,
                             'source': 'alpha_vantage',
                             'collected_at': datetime.utcnow().isoformat()
                         }
@@ -78,20 +79,18 @@ class AlphaVantageCollector:
             df = pd.DataFrame(df_data)
             
             for _, row in df.iterrows():
-                date_obj = datetime.strptime(row['date'], '%Y-%m-%d')
-                year = date_obj.year
-                month = f"{date_obj.month:02d}"
-                day = f"{date_obj.day:02d}"
-                
-                file_dir = Path(output_dir) / "alpha_vantage" / str(year) / month / day
+                date_str = row['date']
+                file_dir = Path(output_dir) / "alpha_vantage" / "type=daily" / f"date={date_str}"
                 file_dir.mkdir(parents=True, exist_ok=True)
                 
-                file_path = file_dir / f"fx_daily_{symbol}_{row['date']}.csv"
+                file_path = file_dir / f"part-{int(time.time())}.parquet"
                 
-                if not file_path.exists():
+                if not any(file_dir.glob("*.parquet")):
                     single_row_df = pd.DataFrame([row])
-                    single_row_df.to_csv(file_path, index=False)
+                    single_row_df.to_parquet(file_path, index=False)
                     logger.info(f"Saved {file_path}")
+                else:
+                    logger.info(f"Parquet file already exists in: {file_dir}")
                     
             time.sleep(self.rate_limit_delay)  # Rate limiting
             return True

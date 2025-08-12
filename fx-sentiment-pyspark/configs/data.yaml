@@ -12,7 +12,7 @@ sources:
   alpha_vantage: true
   twelvedata: true
   gdelt: true
-  tradingeconomics: true
+  tradingeconomics: false
   fred: true
   wikipedia: true
 
