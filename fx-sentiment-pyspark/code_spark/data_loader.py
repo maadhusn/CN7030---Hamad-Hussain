@@ -10,6 +10,28 @@ MAX_VALID_ROWS = int(os.getenv('MAX_VALID_ROWS', '40'))
 MAX_TEST_ROWS = int(os.getenv('MAX_TEST_ROWS', '40'))
 PLOT_ROWS = int(os.getenv('PLOT_ROWS', '254'))
 
+def get_row_caps():
+    """Get row caps based on configuration mode"""
+    try:
+        from code_spark.conf import load_config
+        config = load_config()
+        if config.get('mode') == 'bigdata':
+            return None
+        else:
+            return {
+                "train": int(os.getenv('MAX_TRAIN_ROWS', '200')),
+                "valid": int(os.getenv('MAX_VALID_ROWS', '40')),
+                "test": int(os.getenv('MAX_TEST_ROWS', '40')),
+                "plot": int(os.getenv('PLOT_ROWS', '50'))
+            }
+    except ImportError:
+        return {
+            "train": int(os.getenv('MAX_TRAIN_ROWS', '200')),
+            "valid": int(os.getenv('MAX_VALID_ROWS', '40')),
+            "test": int(os.getenv('MAX_TEST_ROWS', '40')),
+            "plot": int(os.getenv('PLOT_ROWS', '50'))
+        }
+
 def build_spark(app_name: str = "eurusd-ml") -> SparkSession:
     from spark_utils.session import get_spark
     spark, _ = get_spark(app_name)
@@ -71,7 +93,11 @@ def split_timewise(df: DataFrame,
                    splits: Tuple[float, float, float] = (0.70, 0.15, 0.15),
                    caps: Optional[Dict[str, int]] = None) -> Tuple[DataFrame, DataFrame, DataFrame]:
     if caps is None:
-        caps = {"train": MAX_TRAIN_ROWS, "valid": MAX_VALID_ROWS, "test": MAX_TEST_ROWS}
+        row_caps = get_row_caps()
+        if row_caps is None:
+            caps = None
+        else:
+            caps = {"train": row_caps["train"], "valid": row_caps["valid"], "test": row_caps["test"]}
     
     df_sorted = df.orderBy(ts_col)
     total_rows = df_sorted.count()
@@ -86,12 +112,13 @@ def split_timewise(df: DataFrame,
     valid_df = df_with_row_num.filter((col("row_num") > train_end) & (col("row_num") <= valid_end)).drop("row_num")
     test_df = df_with_row_num.filter(col("row_num") > valid_end).drop("row_num")
     
-    if train_df.count() > caps["train"]:
-        train_df = train_df.limit(caps["train"])
-    if valid_df.count() > caps["valid"]:
-        valid_df = valid_df.limit(caps["valid"])
-    if test_df.count() > caps["test"]:
-        test_df = test_df.limit(caps["test"])
+    if caps is not None:
+        if train_df.count() > caps["train"]:
+            train_df = train_df.limit(caps["train"])
+        if valid_df.count() > caps["valid"]:
+            valid_df = valid_df.limit(caps["valid"])
+        if test_df.count() > caps["test"]:
+            test_df = test_df.limit(caps["test"])
     
     from pyspark.sql.functions import min as spark_min, max as spark_max
     

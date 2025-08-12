@@ -1,0 +1,27 @@
+name: Sanity Checks
+
+on: [push, pull_request]
+
+jobs:
+  lint-and-import:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        pip install flake8 mypy
+        pip install -r requirements.txt
+    - name: Lint with flake8
+      run: |
+        flake8 code_spark/ apps/ --count --select=E9,F63,F7,F82 --show-source --statistics
+    - name: Type check with mypy
+      run: |
+        mypy code_spark/ --ignore-missing-imports || true
+    - name: Import tests
+      run: |
+        python -c "import code_spark.train_big"
+        python -c "import apps.signal_ui.streamlit_app"
