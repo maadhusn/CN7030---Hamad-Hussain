@@ -1,6 +1,6 @@
 calendar:
   source: "fred"          # "fred" or "trading_econ"
-  mode: "day"             # "day" or "approx_time"
+  mode: "approx_time"     # "day" or "approx_time"
   approx_times_utc:       # used only if mode == "approx_time"
     Consumer Price Index: "13:30"
     Employment Situation: "13:30"
