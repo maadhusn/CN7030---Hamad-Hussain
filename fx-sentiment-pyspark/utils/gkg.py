@@ -24,11 +24,21 @@ def normalize_gkg(df):
     else:
         themes = F.col("themes")
     
+    ts_parsed = F.when(
+        ts_raw.cast("string").rlike("^[0-9]{14}$"),
+        F.to_timestamp(ts_raw.cast("string"), "yyyyMMddHHmmss")
+    ).when(
+        ts_raw.cast("string").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"),
+        F.to_timestamp(ts_raw.cast("string"), "yyyy-MM-dd HH:mm:ss")
+    ).when(
+        ts_raw.cast("string").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"),
+        F.to_timestamp(ts_raw.cast("string"), "yyyy-MM-dd")
+    ).otherwise(F.lit(None).cast("timestamp"))
+    
     return (df
-        .withColumn("ts", F.to_timestamp(ts_raw.cast("string"), "yyyyMMddHHmmss"))
-        .withColumn("tone", F.split(tone_raw.cast("string"), ",").getItem(0).cast("double"))  # Extract first value from comma-separated string
+        .withColumn("ts", ts_parsed)
+        .withColumn("tone", F.split(tone_raw.cast("string"), ",").getItem(0).cast("double"))
         .withColumn("themes_raw", themes.cast("string"))
         .withColumn("docid", F.col("DocumentIdentifier") if "DocumentIdentifier" in columns else F.col("document_id"))
         .select("ts", "tone", "themes_raw", "docid")
-        .filter(F.col("ts").isNotNull())
     )

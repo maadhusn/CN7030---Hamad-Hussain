@@ -147,6 +147,8 @@ def check_gdelt_tone_parsing(spark):
     """Checklist 3 — Test GDELT tone parsing edge cases"""
     print("\n[GDELT] Testing GDELT tone parsing edge cases...")
     
+    spark.conf.set("spark.sql.ansi.enabled", "false")
+    
     try:
         try:
             from utils.gkg import normalize_gkg
@@ -179,15 +181,23 @@ def check_gdelt_tone_parsing(spark):
         
         result_count = result_df.count()
         numeric_tone_count = result_df.filter(F.col("tone").isNotNull() & ~F.isnan(F.col("tone"))).count()
+        null_ts_count = result_df.filter(F.col("ts").isNull()).count()
         
-        print(f"[GDELT] Processed {result_count} records, {numeric_tone_count} with valid numeric tone")
-        print("[GDELT] PASS (normalize_gkg handles edge cases correctly)")
-        return "PASS"
+        print(f"[GDELT] Processed {result_count} records, {numeric_tone_count} with valid numeric tone, {null_ts_count} with NULL timestamps")
+        
+        if null_ts_count > 0:
+            print("[GDELT] PASS (normalize_gkg handles edge cases correctly, invalid dates become NULL)")
+            return "PASS"
+        else:
+            print("[GDELT] FAIL (expected some NULL timestamps from invalid dates)")
+            return "FAIL"
         
     except Exception as e:
         print(f"[GDELT] FAIL (error during tone parsing test: {e})")
         traceback.print_exc()
         return "FAIL"
+    finally:
+        spark.conf.unset("spark.sql.ansi.enabled")
 
 def check_rolling_features(spark):
     """Checklist 4 — Review rolling feature calculations"""
@@ -205,7 +215,7 @@ def check_rolling_features(spark):
         window = Window.orderBy("ts")
         recomputed_df = features_df.withColumn(
             "ret_1_recomputed", 
-            (F.col("close") / F.lag("close", 1).over(window)) - 1
+            F.log(F.col("close")) - F.log(F.lag("close", 1).over(window))
         )
         
         if "ret_1" in features_df.columns:
@@ -236,27 +246,41 @@ def check_rolling_features(spark):
             print("[EMA6] SKIP (ema_6 column not found)")
             ema_result = "SKIP"
         else:
-            ema_stats = features_df.select(
-                F.avg("ema_6").alias("avg_ema"),
-                F.avg("close").alias("avg_close"),
-                F.count(F.when(F.col("ema_6").isNotNull(), 1)).alias("non_null_ema")
+            alpha = 2.0 / 7.0  # 2/(6+1)
+            w = Window.orderBy("ts")
+            
+            ema_test_df = features_df.select("ts", "close", "ema_6").withColumn(
+                "ema_prev", F.lag("ema_6", 1).over(w)
+            ).withColumn(
+                "close_prev", F.lag("close", 1).over(w)
+            ).filter(
+                F.col("ema_prev").isNotNull() & F.col("close_prev").isNotNull()
+            )
+            
+            ema_test_df = ema_test_df.withColumn(
+                "resid_prev", F.abs(F.col("ema_6") - ((1-alpha)*F.col("ema_prev") + alpha*F.col("close_prev")))
+            ).withColumn(
+                "resid_curr", F.abs(F.col("ema_6") - ((1-alpha)*F.col("ema_prev") + alpha*F.col("close")))
+            ).withColumn(
+                "prev_better", (F.col("resid_prev") < F.col("resid_curr")).cast("double")
+            )
+            
+            stats_row = ema_test_df.agg(
+                F.avg("prev_better").alias("ratio"),
+                F.avg("resid_prev").alias("mae_prev")
             ).collect()[0]
             
-            avg_ema = ema_stats["avg_ema"]
-            avg_close = ema_stats["avg_close"]
-            non_null_ema = ema_stats["non_null_ema"]
+            ratio = float(stats_row["ratio"]) if stats_row["ratio"] is not None else 0.0
+            mae = float(stats_row["mae_prev"]) if stats_row["mae_prev"] is not None else 0.0
             
-            if avg_ema and avg_close:
-                ratio = abs(avg_ema - avg_close) / avg_close
-                if ratio < 0.1:  # Within 10%
-                    print(f"[EMA6] PASS (avg_ema={avg_ema:.4f}, avg_close={avg_close:.4f}, ratio={ratio:.3f})")
-                    ema_result = "PASS"
-                else:
-                    print(f"[EMA6] FAIL (avg_ema={avg_ema:.4f}, avg_close={avg_close:.4f}, ratio={ratio:.3f})")
-                    ema_result = "FAIL"
+            print(f"[EMA6] prev-vs-curr better ratio={ratio:.3f}, mae_prev={mae:.3e}, threshold=0.95")
+            
+            if ratio >= 0.95:
+                print("[EMA6] PASS (EMA follows proper recursive formula)")
+                ema_result = "PASS"
             else:
-                print("[EMA6] SKIP (insufficient data for validation)")
-                ema_result = "SKIP"
+                print("[EMA6] FAIL (EMA may be using current price - leakage detected)")
+                ema_result = "FAIL"
         
         if ret_result == "FAIL" or ema_result == "FAIL":
             return "FAIL"

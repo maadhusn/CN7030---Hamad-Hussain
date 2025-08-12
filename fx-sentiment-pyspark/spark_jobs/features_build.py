@@ -23,6 +23,8 @@ from pyspark.sql.functions import (
 import pyspark.sql.functions as F
 from pyspark.sql.types import DoubleType
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from spark_utils.session import get_spark
 from spark_utils.io import write_table, read_table
 
@@ -39,7 +41,7 @@ def load_config(config_path: str = "configs/features.yaml") -> dict:
         logger.error(f"Error loading config: {e}")
         return {}
 
-def build_price_features(df: DataFrame, ret_windows: list, vol_windows: list, ema_windows: list) -> DataFrame:
+def build_price_features(df: DataFrame, ret_windows: list, vol_windows: list, ema_windows: list, spark) -> DataFrame:
     """Build price-based features: returns, realized volatility, EMAs"""
     try:
         result_df = df
@@ -51,11 +53,16 @@ def build_price_features(df: DataFrame, ret_windows: list, vol_windows: list, em
         )
         
         for w in ret_windows:
-            window_spec_w = Window.orderBy("ts").rowsBetween(-w, 0)
+            window_spec_lag = Window.orderBy("ts")
             
             result_df = result_df.withColumn(
                 f"ret_{w}",
-                F.log(col("close") / F.first("close").over(window_spec_w))
+                F.when(
+                    F.lag("close", w).over(window_spec_lag).isNull(),
+                    None
+                ).otherwise(
+                    F.log(col("close")) - F.log(F.lag("close", w).over(window_spec_lag))
+                )
             )
             
         for w in vol_windows:
@@ -67,25 +74,26 @@ def build_price_features(df: DataFrame, ret_windows: list, vol_windows: list, em
             )
             
         for w in ema_windows:
-            alpha = 2.0 / (1.0 + w)
+            alpha = 2.0 / (w + 1)
             
-            window_spec_init = Window.orderBy("ts").rowsBetween(-w, 0)
-            result_df = result_df.withColumn(
-                f"ema_{w}_init",
-                F.avg("close").over(window_spec_init)
-            )
+            ordered_data = result_df.select("ts", "close").orderBy("ts").collect()
             
-            window_spec_lag = Window.orderBy("ts")
-            result_df = result_df.withColumn(
-                f"ema_{w}",
-                F.when(
-                    F.lag(f"ema_{w}_init", 1).over(window_spec_lag).isNull(),
-                    col(f"ema_{w}_init")
-                ).otherwise(
-                    col("close") * lit(alpha) + 
-                    F.lag(f"ema_{w}", 1).over(window_spec_lag) * (1 - alpha)
-                )
-            ).drop(f"ema_{w}_init")
+            ema_values = []
+            ema_prev = None
+            close_prev = None
+            
+            for row in ordered_data:
+                close_val = row["close"]
+                if ema_prev is None:
+                    ema_val = close_val  # Initialize with first close
+                else:
+                    ema_val = alpha * close_prev + (1 - alpha) * ema_prev
+                ema_values.append((row["ts"], ema_val))
+                ema_prev = ema_val
+                close_prev = close_val  # Update for next iteration
+            
+            ema_df = spark.createDataFrame(ema_values, ["ts", f"ema_{w}"])
+            result_df = result_df.join(ema_df, "ts", "left")
             
         return result_df
         
@@ -109,7 +117,7 @@ def build_tone_features(df: DataFrame) -> DataFrame:
             F.avg("tone_mean_1h").over(window_spec_24h)
         )
         
-        alpha = 2.0 / (1.0 + 24)
+        alpha = 2.0 / (24 + 1)
         
         window_spec_lag = Window.orderBy("ts")
         result_df = result_df.withColumn(
@@ -121,7 +129,7 @@ def build_tone_features(df: DataFrame) -> DataFrame:
                 F.lag("tone_ema_24_init", 1).over(window_spec_lag).isNull(),
                 col("tone_ema_24_init")
             ).otherwise(
-                col("tone_mean_1h") * lit(alpha) + 
+                F.lag("tone_mean_1h", 1).over(window_spec_lag) * lit(alpha) + 
                 F.lag("tone_ema_24", 1).over(window_spec_lag) * (1 - alpha)
             )
         ).drop("tone_ema_24_init")
@@ -165,7 +173,7 @@ def build_attention_features(df: DataFrame) -> DataFrame:
                 F.sum(col_name).over(window_spec_24h)
             )
             
-            alpha = 2.0 / (1.0 + 24)
+            alpha = 2.0 / (24 + 1)
             
             window_spec_lag = Window.orderBy("ts")
             result_df = result_df.withColumn(
@@ -177,7 +185,7 @@ def build_attention_features(df: DataFrame) -> DataFrame:
                     F.lag(f"{col_name}_ema_24_init", 1).over(window_spec_lag).isNull(),
                     col(f"{col_name}_ema_24_init")
                 ).otherwise(
-                    col(col_name) * lit(alpha) + 
+                    F.lag(col_name, 1).over(window_spec_lag) * lit(alpha) + 
                     F.lag(f"{col_name}_ema_24", 1).over(window_spec_lag) * (1 - alpha)
                 )
             ).drop(f"{col_name}_ema_24_init")
@@ -237,7 +245,7 @@ def build_macro_features(df: DataFrame) -> DataFrame:
                 continue
                 
             for window in [5, 20]:
-                alpha = 2.0 / (1.0 + window * 24)  # Convert days to hours
+                alpha = 2.0 / (window * 24 + 1)  # Convert days to hours
                 
                 window_spec_lag = Window.orderBy("ts")
                 result_df = result_df.withColumn(
@@ -249,7 +257,7 @@ def build_macro_features(df: DataFrame) -> DataFrame:
                         F.lag(f"{series.lower()}_ema{window}_init", 1).over(window_spec_lag).isNull(),
                         col(f"{series.lower()}_ema{window}_init")
                     ).otherwise(
-                        col(series) * lit(alpha) + 
+                        F.lag(series, 1).over(window_spec_lag) * lit(alpha) + 
                         F.lag(f"{series.lower()}_ema{window}", 1).over(window_spec_lag) * (1 - alpha)
                     )
                 ).drop(f"{series.lower()}_ema{window}_init")
@@ -352,8 +360,8 @@ def main():
     vol_windows = windows_config.get('vol', [6, 24, 72])
     ema_windows = windows_config.get('ema', [6, 24, 72])
     
-    spark, is_delta = get_spark("features-build")
-    fmt = "delta" if is_delta else "parquet"
+    spark, is_delta = get_spark("features-build", force_parquet=True)
+    fmt = "parquet"
     
     logger.info(f"Using storage format: {fmt}")
     
@@ -369,7 +377,7 @@ def main():
             
         features_df = labeled_df
         
-        features_df = build_price_features(features_df, ret_windows, vol_windows, ema_windows)
+        features_df = build_price_features(features_df, ret_windows, vol_windows, ema_windows, spark)
         logger.info("Built price features")
         
         features_df = build_tone_features(features_df)
