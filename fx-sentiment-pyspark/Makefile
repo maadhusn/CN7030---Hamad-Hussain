@@ -1,3 +1,9 @@
+# Auto-load local secrets if present (no execution; just exports)
+ifneq (,$(wildcard conf/secrets.env))
+include conf/secrets.env
+export
+endif
+
 # ===== Big-data pipelines (heavy — do not run locally) =====
 ingest-fx:           # ALL history per conf
 	python -m code_spark.ingest_fx

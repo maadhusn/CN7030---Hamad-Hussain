@@ -1,4 +1,8 @@
+# local secrets
+conf/secrets.env
+conf/*.env
 .env
+
 .venv/
 __pycache__/
 mlruns/

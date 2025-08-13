@@ -101,18 +101,26 @@ big_run:
 
 ## 🔑 API Keys & Secrets
 
-Create `conf/secrets.env` (never commit):
-```bash
-# Required for full functionality
-ALPHAVANTAGE_API_KEY=your_alpha_vantage_key_here
-TWELVEDATA_API_KEY=your_twelvedata_key_here
+### Environment & Secrets
 
-# Optional (improves rate limits)
-FRED_API_KEY=your_fred_key_here
+1) Copy the template and fill in your keys:
+   ```bash
+   cp conf/secrets.env.example conf/secrets.env
+   # edit conf/secrets.env and set your API keys and runtime flags
+   ```
 
-# Disabled in current config
-TRADINGECONOMICS_API_KEY=
-```
+2) Makefile auto-loads `conf/secrets.env` for all commands.
+
+3) To export in a plain shell:
+   ```bash
+   set -a; source conf/secrets.env; set +a
+   ```
+
+**Variables:**
+- **ALPHAVANTAGE_API_KEY**, **TWELVEDATA_API_KEY**, **FRED_API_KEY**, **TRADINGECONOMICS_API_KEY**
+- **BIG_RUN**, **ALLOW_BIG_RUN** (safety gates; keep false for local runs)
+- **MAX_TRAIN_ROWS** (cap for local/dev runs)
+- **Paths**: FEATURE_STORE_REGISTRY_PATH, DELTA_BASE, ARTIFACTS_DIR
 
 ### Getting Free API Keys
 - **Alpha Vantage**: [Get free key](https://www.alphavantage.co/support/#api-key) (500 requests/day) - Powers daily FX data
