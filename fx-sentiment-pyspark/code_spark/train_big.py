@@ -35,23 +35,46 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 def xgb_pipeline(feature_cols: List[str]) -> Pipeline:
-    """Create XGBoost pipeline (placeholder for XGBoost4J-Spark integration)"""
-    logger.warning("XGBoost4J-Spark integration requires --packages ml.dmlc:xgboost4j-spark_2.12:1.7.6")
-    
+    """Create XGBoost pipeline with XGBoost4J-Spark integration and GBT fallback"""
     from pyspark.ml.feature import VectorAssembler
-    from pyspark.ml.classification import GBTClassifier
     
     assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
     
-    gbt = GBTClassifier(
-        featuresCol="features",
-        labelCol="label",
-        maxIter=100,
-        maxDepth=6,
-        stepSize=0.1
-    )
-    
-    return Pipeline(stages=[assembler, gbt])
+    try:
+        from xgboost.spark import SparkXGBClassifier
+        
+        xgb = SparkXGBClassifier(
+            features_col="features",
+            label_col="label",
+            prediction_col="prediction",
+            probability_col="probability",
+            max_depth=6,
+            learning_rate=0.1,
+            n_estimators=100,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            seed=42
+        )
+        
+        logger.info("Using XGBoost4J-Spark classifier")
+        return Pipeline(stages=[assembler, xgb])
+        
+    except ImportError:
+        logger.warning("XGBoost4J-Spark not available, falling back to GBTClassifier")
+        from pyspark.ml.classification import GBTClassifier
+        
+        gbt = GBTClassifier(
+            featuresCol="features",
+            labelCol="label",
+            maxIter=100,
+            maxDepth=6,
+            stepSize=0.1,
+            seed=42
+        )
+        
+        return Pipeline(stages=[assembler, gbt])
 
 def train_models(algorithms: Optional[List[str]] = None,
                  calibrate: bool = True) -> Dict[str, Any]:

@@ -3,21 +3,27 @@ spark:
   shuffle_partitions: 400
   dynamic_allocation: true
   default_parallelism: 400
+big_run:
+  enabled: true       # Enable unlimited data processing
+  unlimited_data: true
+limits:
+  enabled: false      # Disable row caps for big runs
+  max_rows: null      # No cap; code must handle None safely
 data_ranges:
   fx:
     symbol: "EURUSD"
-    start: null       # ALL available history
-    end: null
+    start: "env:START_DATE"   # fallback: auto-15y (compute in code if env absent)
+    end: "env:END_DATE"
   fred:
     series: ["CPIAUCSL","PCEPI"]   # extendable
-    start: null       # ALL available history
-    end: null
+    start: "env:START_DATE"   # fallback: auto-15y
+    end: "env:END_DATE"
   gdelt:
     start: "2015-02-18T00:00:00Z"  # earliest reliable for GKG 2.1
-    end: null
+    end: "env:END_DATE"
   calendar_us:
-    start: null
-    end: null
+    start: "env:START_DATE"
+    end: "env:END_DATE"
 storage:
   base: "delta/"
   bronze: "delta/bronze"
@@ -33,3 +39,4 @@ training:
   cv_folds: 5
   time_split: true
   calibrate: true
+  max_train_rows: null  # No cap for big runs

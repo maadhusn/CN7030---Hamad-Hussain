@@ -149,23 +149,95 @@ make train  # Uses spark_jobs/ with row caps
 make ui-run  # streamlit run apps/signal_ui/streamlit_app.py --server.headless true
 ```
 
-### Colab Deployment
-Create `notebooks/Colab_Quickstart.ipynb`:
+## 🚀 Run on Google Colab (15-Year Big Run)
+
+### Quick Start (5 Steps)
+
+1. **Open Colab Notebook**
+   ```
+   https://colab.research.google.com/github/maadhusn/CN7030---Hamad-Hussain/blob/colab-15y-run-ready/fx-sentiment-pyspark/notebooks/Colab_15Y_FX_Pipeline.ipynb
+   ```
+
+2. **Install Dependencies** (Cell 1)
+   - Installs Java 17, Spark 3.5.0, Delta Lake, XGBoost4J-Spark
+   - Runtime: ~3-5 minutes
+
+3. **Setup Repository** (Cell 2)  
+   - Clones repo and checks out `colab-15y-run-ready` branch
+   - Runtime: ~1 minute
+
+4. **Configure API Keys** (Cell 3)
+   ```python
+   # PASTE YOUR ACTUAL API KEYS HERE
+   API_KEYS = {
+       'ALPHAVANTAGE_API_KEY': 'your_alpha_vantage_key_here',  # ⚠️ REPLACE
+       'TWELVEDATA_API_KEY': 'your_twelvedata_key_here',       # ⚠️ REPLACE  
+       'FRED_API_KEY': 'your_fred_key_here',                   # ⚠️ REPLACE
+   }
+   ```
+
+5. **Run Full Pipeline** (Cells 5-9)
+   - **Expected Runtime**: 2-4 hours for 15 years of data
+   - **Data Volume**: ~500MB-2GB depending on sources
+   - **Models**: Logistic Regression, GBT, XGBoost (with fallback)
+
+### Pipeline Stages
+
+| Stage | Runtime | Output |
+|-------|---------|--------|
+| **Bronze Ingestion** | 30-60 min | Delta tables: `bronze_fx`, `bronze_fred_*`, `bronze_gkg`, `bronze_calendar_us` |
+| **Silver Features** | 20-40 min | Technical indicators, macro features, sentiment scores |
+| **Gold Matrix** | 10-20 min | Labeled training data with chronological splits |
+| **Model Training** | 60-120 min | Trained models with performance metrics |
+| **Visualizations** | 5-10 min | ROC curves, confusion matrices, calibration plots |
+
+### Outputs Location
+
+- **Models**: `/content/models/` (MLflow format)
+- **Metrics**: `/content/reports/colab/*.json`
+- **Plots**: `/content/reports/colab/*.png`
+- **Final Report**: `/content/reports/colab/FINAL_PIPELINE_REPORT.md`
+
+### Environment Overrides
+
+**Date Range** (auto-calculated 15 years):
 ```python
-# Installation cell
-!pip install pyspark==3.5.0 delta-spark==3.0.0 mlflow==2.10.2
-!pip install pandas numpy requests python-dotenv pyarrow pyyaml tqdm
-!pip install scikit-learn matplotlib feast streamlit plotly
-
-# Setup cell
-import os
-os.environ['ALPHAVANTAGE_API_KEY'] = 'your_key_here'
-os.environ['TWELVEDATA_API_KEY'] = 'your_key_here'
-os.environ['BIG_RUN'] = '0'  # Keep safe for Colab
-
-# Run pipeline cell
-!python -m code_spark.train_big --algorithms lr rf --output-dir /content/models
+os.environ['START_DATE'] = '2010-01-01'  # Override if needed
+os.environ['END_DATE'] = '2025-01-01'    # Override if needed
 ```
+
+**Development Mode** (90-day smoke test):
+```python
+# In Cell 4, set SMOKE_TEST = True for quick validation
+SMOKE_TEST = True  # Uses 90-day range + row caps
+```
+
+### Anti-Leak Safeguards (Verified)
+
+✅ **Chronological Splits**: Train/validation/test respect time ordering  
+✅ **Proper Time Windows**: No future data leakage in features  
+✅ **Left-Only Joins**: Economic data joined with appropriate lags  
+✅ **Event Windows**: Pre/during/post event features properly aligned  
+
+### Parameter Changes (No Code Edits)
+
+All parameters configurable via `conf/project.yaml` or environment variables:
+
+- **Date Ranges**: `START_DATE`/`END_DATE` environment variables
+- **Row Limits**: `MAX_TRAIN_ROWS` environment variable  
+- **Model Selection**: `conf/project.yaml` → `training.model_candidates`
+- **Feature Windows**: `conf/project.yaml` → `features.*`
+
+### Troubleshooting
+
+**XGBoost Issues**: Pipeline automatically falls back to GBT if XGBoost4J-Spark fails  
+**Memory Issues**: Reduce date range or enable row caps via `MAX_TRAIN_ROWS=100000`  
+**API Rate Limits**: Built-in rate limiting and retry logic for all data sources  
+**Delta Lake Issues**: Automatic fallback to Parquet format if Delta fails  
+
+---
+
+### Colab Deployment (Legacy)
 
 ### Cluster Deployment (Production)
 ```bash
