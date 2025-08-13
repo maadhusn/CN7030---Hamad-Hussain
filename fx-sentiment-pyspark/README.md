@@ -233,6 +233,7 @@ All parameters configurable via `conf/project.yaml` or environment variables:
 **XGBoost Issues**: Pipeline automatically falls back to GBT if XGBoost4J-Spark fails  
 **Memory Issues**: Reduce date range or enable row caps via `MAX_TRAIN_ROWS=100000`  
 **API Rate Limits**: Built-in rate limiting and retry logic for all data sources  
+**Missing Landing Data**: Bronze ingestion automatically generates mock FX data when landing zone is empty (Colab mode)  
 **Delta Lake Issues**: Automatic fallback to Parquet format if Delta fails  
 
 ---
